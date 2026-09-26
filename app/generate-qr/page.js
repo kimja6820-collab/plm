@@ -1,259 +1,246 @@
-'use client'
+'use client';
 
-import { useState, useEffect } from 'react'
-import { supabase } from '@/lib/supabaseClient'
-import Link from 'next/link'
+import { useState } from 'react';
+import { supabase } from '@/lib/supabaseClient';
 
 export default function GenerateQRPage() {
-  // ฟอร์ม Input
-  const [tableNumber, setTableNumber] = useState('')
-  const [adultCount, setAdultCount] = useState(1)
-  const [childCount, setChildCount] = useState(0)
+  // Form states
+  const [tableNumber, setTableNumber] = useState('');
+  const [adultCount, setAdultCount] = useState('1');
+  const [childCount, setChildCount] = useState('0');
 
-  // สถานะการทำงาน
-  const [loading, setLoading] = useState(false)
-  const [errorMessage, setErrorMessage] = useState('')
+  // App UI states
+  const [loading, setLoading] = useState(false);
+  const [errorMessage, setErrorMessage] = useState('');
+  
+  // Existing session warning states
+  const [existingSession, setExistingSession] = useState(null);
+  const [showConfirmModal, setShowConfirmModal] = useState(false);
+  const [closingSession, setClosingSession] = useState(false);
 
-  // สถานะเมื่อเจอ Session ค้าง
-  const [existingSession, setExistingSession] = useState(null)
-  const [showConfirmModal, setShowConfirmModal] = useState(false)
+  // Success QR states
+  const [generatedSession, setGeneratedSession] = useState(null);
+  const [copied, setCopied] = useState(false);
 
-  // สถานะเมื่อเปิดโต๊ะใหม่สำเร็จ
-  const [createdSession, setCreatedSession] = useState(null)
-  const [originUrl, setOriginUrl] = useState('')
-  const [copied, setCopied] = useState(false)
+  // คำนวณเวลาที่เปิดโต๊ะค้างไว้ (เป็นนาที)
+  const getElapsedMinutes = (createdAt) => {
+    if (!createdAt) return 0;
+    const diffMs = new Date() - new Date(createdAt);
+    return Math.floor(diffMs / (1000 * 60));
+  };
 
-  // ดึง Origin (Domain/Port) ปัจจุบันเมื่อโหลด client-side
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      setOriginUrl(window.location.origin)
-    }
-  }, [])
-
-  // คำนวณระยะเวลาเป็นนาทีจาก created_at
-  const getMinutesElapsed = (createdAt) => {
-    if (!createdAt) return 0
-    const created = new Date(createdAt)
-    const now = new Date()
-    const diffMs = now - created
-    return Math.floor(diffMs / (1000 * 60))
-  }
-
-  // 1. กดปุ่มเปิดโต๊ะ
+  // จัดการการกดปุ่ม "เปิดโต๊ะ"
   const handleOpenTable = async (e) => {
-    e.preventDefault()
-    setErrorMessage('')
-    setExistingSession(null)
-    setCreatedSession(null)
-
-    const tableNum = parseInt(tableNumber, 10)
-    const adult = parseInt(adultCount, 10)
-    const child = parseInt(childCount, 10)
-
-    if (isNaN(tableNum) || tableNum <= 0) {
-      setErrorMessage('กรุณาระบุเลขโต๊ะให้ถูกต้อง')
-      return
+    e.preventDefault();
+    if (!tableNumber || parseInt(tableNumber, 10) <= 0) {
+      setErrorMessage('กรุณากรอกเลขโต๊ะให้ถูกต้อง');
+      return;
     }
 
-    setLoading(true)
+    setLoading(true);
+    setErrorMessage('');
+    setExistingSession(null);
+    setGeneratedSession(null);
+
+    const tableNum = parseInt(tableNumber, 10);
+    const adultNum = parseInt(adultCount, 10) || 0;
+    const childNum = parseInt(childCount, 10) || 0;
 
     try {
-      // 2. เช็คว่ามี session ที่ status = 'open' ของโต๊ะนี้อยู่แล้วหรือไม่
+      // 1. เช็คก่อนว่ามี session status = 'open' ของโต๊ะนี้อยู่แล้วหรือไม่
       const { data: openSessions, error: checkError } = await supabase
         .from('sessions')
-        .select('*')
+        .select('id, table_number, adult_count, child_count, status, created_at')
         .eq('table_number', tableNum)
-        .eq('status', 'open')
+        .eq('status', 'open');
 
-      if (checkError) throw checkError
+      if (checkError) throw checkError;
 
-      // ถ้ามี Session เปิดค้างอยู่
       if (openSessions && openSessions.length > 0) {
-        setExistingSession(openSessions[0])
-        setLoading(false)
-        return
+        // พบ session ค้าง -> แสดงกล่องเตือน
+        setExistingSession(openSessions[0]);
+        setLoading(false);
+        return;
       }
 
-      // ถ้าไม่มี ให้ Insert แถวใหม่ลงตาราง sessions
+      // 2. ถ้าไม่มี session ค้าง -> Insert session ใหม่
       const { data: newSession, error: insertError } = await supabase
         .from('sessions')
         .insert([
           {
             table_number: tableNum,
-            adult_count: adult,
-            child_count: child,
+            adult_count: adultNum,
+            child_count: childNum,
             status: 'open',
           },
         ])
         .select()
-        .single()
+        .single();
 
-      if (insertError) throw insertError
+      if (insertError) throw insertError;
 
       // สร้างสำเร็จ
-      setCreatedSession(newSession)
+      setGeneratedSession(newSession);
     } catch (err) {
-      console.error(err)
-      setErrorMessage(err.message || 'เกิดข้อผิดพลาดในการเชื่อมต่อฐานข้อมูล')
+      console.error('Error opening table:', err);
+      setErrorMessage(err.message || 'เกิดข้อผิดพลาดในการเชื่อมต่อฐานข้อมูล');
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
-  }
+  };
 
-  // 3. กดปิดโต๊ะเดิม
-  const handleCloseExistingSession = async () => {
-    if (!existingSession) return
-    setLoading(true)
-    setErrorMessage('')
+  // ยืนยันปิดโต๊ะเดิม
+  const handleConfirmCloseExistingSession = async () => {
+    if (!existingSession) return;
+    setClosingSession(true);
 
     try {
-      // update status = 'closed' เช็คเงื่อนไขป้องกันการกดซ้ำด้วย
-      const { error: updateError } = await supabase
+      // Update status เป็น 'closed' โดยเช็คว่า status ยังเป็น 'open' อยู่เพื่อกันกดซ้ำ
+      const { error } = await supabase
         .from('sessions')
         .update({ status: 'closed' })
         .eq('id', existingSession.id)
-        .eq('status', 'open')
+        .eq('status', 'open');
 
-      if (updateError) throw updateError
+      if (error) throw error;
 
-      // ปิดสำเร็จ -> ปิดกล่องยืนยัน, เอากล่องเตือนออก, พนักงานกดเปิดโต๊ะใหม่ได้เลย
-      setShowConfirmModal(false)
-      setExistingSession(null)
-      alert(`ปิด Session เดิมของโต๊ะ ${existingSession.table_number} เรียบร้อยแล้ว`)
+      // เมื่อปิดสำเร็จ: ปิด Modal ยืนยัน, ลบกล่องเตือนออก
+      setShowConfirmModal(false);
+      setExistingSession(null);
+      alert(`ปิดออเดอร์เดิมของโต๊ะ ${existingSession.table_number} เรียบร้อยแล้ว กรุณากด "เปิดโต๊ะ" อีกครั้ง`);
     } catch (err) {
-      console.error(err)
-      setErrorMessage('ไม่สามารถปิด Session เดิมได้ โปรดลองอีกครั้ง')
+      console.error('Error closing session:', err);
+      alert('ไม่สามารถปิดออเดอร์เดิมได้: ' + err.message);
     } finally {
-      setLoading(false)
+      setClosingSession(false);
     }
-  }
+  };
 
-  // 4. ล้างฟอร์มเพื่อเปิดโต๊ะใหม่
-  const handleResetForm = () => {
-    setTableNumber('')
-    setAdultCount(1)
-    setChildCount(0)
-    setCreatedSession(null)
-    setExistingSession(null)
-    setErrorMessage('')
-    setCopied(false)
-  }
+  // กดเปิดโต๊ะใหม่ (ล้างข้อมูลเริ่มใหม่)
+  const handleReset = () => {
+    setGeneratedSession(null);
+    setExistingSession(null);
+    setTableNumber('');
+    setAdultCount('1');
+    setChildCount('0');
+    setErrorMessage('');
+    setCopied(false);
+  };
 
   // คัดลอกลิงก์
-  const targetUrl = createdSession
-    ? `${originUrl}/order/${createdSession.table_number}`
-    : ''
+  const handleCopyLink = (targetUrl) => {
+    navigator.clipboard.writeText(targetUrl);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
 
-  const handleCopyLink = () => {
-    if (!targetUrl) return
-    navigator.clipboard.writeText(targetUrl)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
-  }
+  // คำนวณ URL และ QR Code URL
+  const origin = typeof window !== 'undefined' ? window.location.origin : '';
+  const orderUrl = generatedSession ? `${origin}/order/${generatedSession.table_number}` : '';
+  const qrImageUrl = generatedSession
+    ? `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(orderUrl)}`
+    : '';
 
   return (
     <div style={styles.container}>
-      {/* ส่วนหัว */}
       <header style={styles.header}>
-        <Link href="/" style={styles.backLink}>← กลับหน้าหลัก</Link>
-        <h1 style={styles.title}>เปิดโต๊ะ & สร้าง QR Code สั่งอาหาร</h1>
+        <h1 style={styles.title}>knomwan 🍧</h1>
+        <p style={styles.subtitle}>ระบบเปิดโต๊ะและสร้าง QR Code สำหรับพนักงาน</p>
       </header>
 
-      {/* ข้อความแสดง Error ทั่วไป */}
-      {errorMessage && (
-        <div style={styles.errorBanner}>
-          ⚠️ {errorMessage}
-        </div>
-      )}
+      {/* ข้อความ Error ทั่วไป */}
+      {errorMessage && <div style={styles.errorBox}>{errorMessage}</div>}
 
-      {/* ----------------- กรณีที่ 1: แสดง QR Code เมื่อสร้างสำเร็จ ----------------- */}
-      {createdSession ? (
+      {/* 1. กรณีสร้าง QR Code สำเร็จ */}
+      {generatedSession ? (
         <div style={styles.qrCard}>
-          <div style={{ backgroundColor: '#dcfce7', color: '#15803d', padding: '10px 16px', borderRadius: '8px', fontWeight: 'bold', marginBottom: '20px' }}>
-            ✓ เปิดโต๊ะสำเร็จแล้ว
-          </div>
-
+          <div style={styles.badgeSuccess}>เปิดโต๊ะสำเร็จ!</div>
+          <h2 style={styles.qrTitle}>โต๊ะ {generatedSession.table_number}</h2>
+          
           <p style={styles.summaryText}>
-            โต๊ะ {createdSession.table_number} · ผู้ใหญ่ {createdSession.adult_count} · เด็ก {createdSession.child_count}
+            ผู้ใหญ่ <strong>{generatedSession.adult_count}</strong> ท่าน · เด็ก <strong>{generatedSession.child_count}</strong> ท่าน
           </p>
 
-          <div style={styles.qrBox}>
+          <div style={styles.qrImageWrapper}>
             <img
-              src={`https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(targetUrl)}`}
-              alt={`QR Code สำหรับโต๊ะ ${createdSession.table_number}`}
-              style={{ width: '260px', height: '260px', display: 'block', margin: '0 auto' }}
+              src={qrImageUrl}
+              alt={`QR Code โต๊ะ ${generatedSession.table_number}`}
+              style={styles.qrImage}
             />
           </div>
 
+          <p style={styles.urlLabel}>ลิงก์สำหรับสั่งอาหาร:</p>
           <div style={styles.urlBox}>
-            <span style={styles.urlText}>{targetUrl}</span>
-            <button type="button" onClick={handleCopyLink} style={styles.copyBtn}>
-              {copied ? 'คัดลอกแล้ว!' : 'คัดลอกลิงก์'}
+            <span style={styles.urlText}>{orderUrl}</span>
+            <button
+              onClick={() => handleCopyLink(orderUrl)}
+              style={copied ? styles.copyBtnSuccess : styles.copyBtn}
+            >
+              {copied ? 'คัดลอกแล้ว! ✓' : 'คัดลอกลิงก์'}
             </button>
           </div>
 
-          <button type="button" onClick={handleResetForm} style={styles.resetBtn}>
+          <button onClick={handleReset} style={styles.resetBtn}>
             + เปิดโต๊ะใหม่
           </button>
         </div>
       ) : (
-        /* ----------------- กรณีที่ 2: ฟอร์มปกติ & กล่องเตือน Session ค้าง ----------------- */
-        <div style={styles.card}>
-          {/* กล่องเตือนภัยเมื่อมี Session เปิดค้างอยู่ */}
+        /* 2. ฟอร์มปกติ & กล่องเตือน */
+        <div style={styles.formCard}>
+          {/* กล่องเตือนเมื่อมี Session ค้างอยู่ */}
           {existingSession && (
             <div style={styles.warningBox}>
-              <h3 style={{ margin: '0 0 8px 0', fontSize: '1.2rem', color: '#991b1b' }}>
-                ⚠️ โต๊ะนี้มีลูกค้าอยู่ระหว่างทานอาหาร
+              <div style={styles.warningIcon}>⚠️</div>
+              <h3 style={styles.warningTitle}>
+                โต๊ะ {existingSession.table_number} มีลูกค้าอยู่ระหว่างทานอาหาร
               </h3>
-              <p style={{ margin: '0 0 16px 0', fontSize: '1rem', color: '#7f1d1d' }}>
-                โต๊ะ {existingSession.table_number} มีการเปิด Session ค้างอยู่ กรุณาปิดออเดอร์เดิมก่อนเปิดใหม่
-              </p>
+              <p style={styles.warningDesc}>กรุณาปิดออเดอร์เดิมก่อน จึงจะเปิดโต๊ะใหม่ได้</p>
               <button
-                type="button"
                 onClick={() => setShowConfirmModal(true)}
-                style={styles.closeOldBtn}
+                style={styles.closeOldSessionBtn}
               >
                 ปิดออเดอร์เดิม
               </button>
             </div>
           )}
 
-          <form onSubmit={handleOpenTable} style={styles.form}>
-            <div style={styles.field}>
-              <label style={styles.label}>หมายเลขโต๊ะ:</label>
+          {/* ฟอร์มกรอกข้อมูล */}
+          <form onSubmit={handleOpenTable}>
+            <div style={styles.inputGroup}>
+              <label style={styles.label}>เลขโต๊ะ *</label>
               <input
                 type="number"
                 min="1"
                 required
-                placeholder="ระบุเลขโต๊ะ เช่น 7"
                 value={tableNumber}
                 onChange={(e) => setTableNumber(e.target.value)}
-                style={styles.input}
+                placeholder="ระบุเลขโต๊ะ (เช่น 7)"
+                style={styles.inputBig}
               />
             </div>
 
-            <div style={styles.fieldRow}>
-              <div style={{ flex: 1 }}>
-                <label style={styles.label}>ผู้ใหญ่ (คน):</label>
+            <div style={styles.row}>
+              <div style={{ ...styles.inputGroup, flex: 1 }}>
+                <label style={styles.label}>ผู้ใหญ่ (คน)</label>
                 <input
                   type="number"
                   min="1"
                   required
                   value={adultCount}
                   onChange={(e) => setAdultCount(e.target.value)}
-                  style={styles.input}
+                  style={styles.inputMedium}
                 />
               </div>
 
-              <div style={{ flex: 1 }}>
-                <label style={styles.label}>เด็ก (คน):</label>
+              <div style={{ ...styles.inputGroup, flex: 1 }}>
+                <label style={styles.label}>เด็ก (คน)</label>
                 <input
                   type="number"
                   min="0"
                   required
                   value={childCount}
                   onChange={(e) => setChildCount(e.target.value)}
-                  style={styles.input}
+                  style={styles.inputMedium}
                 />
               </div>
             </div>
@@ -261,222 +248,303 @@ export default function GenerateQRPage() {
             <button
               type="submit"
               disabled={loading}
-              style={{
-                ...styles.submitBtn,
-                opacity: loading ? 0.6 : 1,
-                cursor: loading ? 'not-allowed' : 'pointer'
-              }}
+              style={loading ? styles.submitBtnDisabled : styles.submitBtn}
             >
-              {loading ? 'กำลังประมวลผล...' : 'เปิดโต๊ะ'}
+              {loading ? 'กำลังตรวจสอบ...' : '🚀 เปิดโต๊ะ'}
             </button>
           </form>
         </div>
       )}
 
-      {/* ----------------- Modal ยืนยันการปิดโต๊ะเดิม ----------------- */}
+      {/* Modal ยืนยันการปิดออเดอร์เดิม */}
       {showConfirmModal && existingSession && (
         <div style={styles.modalOverlay}>
           <div style={styles.modalContent}>
-            <h2 style={{ margin: '0 0 16px 0', color: '#b91c1c', fontSize: '1.4rem' }}>
-              ยืนยันการปิดโต๊ะเดิม
-            </h2>
+            <h3 style={styles.modalTitle}>⚠️ ยืนยันปิดโต๊ะเดิม</h3>
+            <p style={styles.modalText}>
+              คุณกำลังจะปิด Session ของ <strong>โต๊ะ {existingSession.table_number}</strong>
+            </p>
 
-            <div style={styles.modalDetail}>
-              <p><strong>เลขโต๊ะ:</strong> โต๊ะ {existingSession.table_number}</p>
-              <p><strong>จำนวนลูกค้าเดิม:</strong> ผู้ใหญ่ {existingSession.adult_count} คน · เด็ก {existingSession.child_count} คน</p>
-              <p style={{ color: '#c2410c', fontWeight: 'bold' }}>
-                ⏱️ เปิดมาแล้ว {getMinutesElapsed(existingSession.created_at)} นาที
+            <div style={styles.sessionDetails}>
+              <p>• จำนวนผู้ใหญ่: <strong>{existingSession.adult_count}</strong> ท่าน</p>
+              <p>• จำนวนเด็ก: <strong>{existingSession.child_count}</strong> ท่าน</p>
+              <p>
+                • เปิดมาแล้ว:{' '}
+                <strong style={{ color: '#dc2626' }}>
+                  {getElapsedMinutes(existingSession.created_at)} นาที
+                </strong>
               </p>
             </div>
 
-            <p style={{ fontSize: '0.95rem', color: '#4b5563', marginBottom: '20px' }}>
-              คุณแน่ใจหรือไม่ว่าต้องการปิด Session เดิมของโต๊ะนี้?
-            </p>
-
             <div style={styles.modalActions}>
               <button
-                type="button"
                 onClick={() => setShowConfirmModal(false)}
-                disabled={loading}
+                disabled={closingSession}
                 style={styles.cancelBtn}
               >
                 ยกเลิก
               </button>
               <button
-                type="button"
-                onClick={handleCloseExistingSession}
-                disabled={loading}
-                style={styles.confirmBtn}
+                onClick={handleConfirmCloseExistingSession}
+                disabled={closingSession}
+                style={styles.confirmCloseBtn}
               >
-                {loading ? 'กำลังปิด...' : 'ยืนยันปิดโต๊ะเดิม'}
+                {closingSession ? 'กำลังปิด...' : 'ยืนยันปิดโต๊ะเดิม'}
               </button>
             </div>
           </div>
         </div>
       )}
     </div>
-  )
+  );
 }
 
-// Inline Styles ดีไซน์ตัวหนังสือใหญ่ เรียบง่าย เหมาะสำหรับงานหน้าร้าน
+// Inline Styles เน้นตัวหนังสือใหญ่ คมชัด ใช้งานง่ายหน้าร้าน
 const styles = {
   container: {
-    maxWidth: '520px',
+    maxWidth: '540px',
     margin: '0 auto',
-    padding: '16px',
+    padding: '20px 16px',
     fontFamily: 'system-ui, -apple-system, sans-serif',
-  },
-  header: {
-    marginBottom: '20px',
-  },
-  backLink: {
-    color: '#2563eb',
-    textDecoration: 'none',
-    fontSize: '1rem',
-    fontWeight: 'bold',
-  },
-  title: {
-    fontSize: '1.6rem',
-    margin: '10px 0 0 0',
     color: '#1f2937',
   },
-  errorBanner: {
-    backgroundColor: '#fef2f2',
-    color: '#991b1b',
-    padding: '12px',
-    borderRadius: '8px',
-    marginBottom: '16px',
-    border: '1px solid #fecaca',
-    fontSize: '1rem',
-  },
-  card: {
-    backgroundColor: '#ffffff',
-    padding: '24px',
-    borderRadius: '16px',
-    boxShadow: '0 4px 12px rgba(0,0,0,0.08)',
-    border: '1px solid #e5e7eb',
-  },
-  warningBox: {
-    backgroundColor: '#fff7ed',
-    border: '2px solid #fdba74',
-    padding: '16px',
-    borderRadius: '12px',
+  header: {
+    textAlign: 'center',
     marginBottom: '24px',
   },
-  closeOldBtn: {
-    width: '100%',
-    padding: '12px',
-    backgroundColor: '#dc2626',
-    color: '#ffffff',
-    border: 'none',
-    borderRadius: '8px',
-    fontSize: '1.05rem',
+  title: {
+    fontSize: '2.2rem',
     fontWeight: 'bold',
-    cursor: 'pointer',
+    color: '#0f172a',
+    margin: '0 0 4px 0',
   },
-  form: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '20px',
+  subtitle: {
+    fontSize: '1rem',
+    color: '#64748b',
+    margin: 0,
   },
-  field: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '8px',
+  formCard: {
+    backgroundColor: '#ffffff',
+    borderRadius: '16px',
+    padding: '24px',
+    boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1)',
+    border: '1px solid #e2e8f0',
   },
-  fieldRow: {
+  row: {
     display: 'flex',
-    gap: '16px',
+    gap: '12px',
+  },
+  inputGroup: {
+    marginBottom: '20px',
   },
   label: {
+    display: 'block',
     fontSize: '1.1rem',
-    fontWeight: 'bold',
-    color: '#374151',
+    fontWeight: '600',
+    marginBottom: '8px',
+    color: '#334155',
   },
-  input: {
+  inputBig: {
+    width: '100%',
+    padding: '16px',
+    fontSize: '1.8rem',
+    fontWeight: 'bold',
+    borderRadius: '12px',
+    border: '2px solid #cbd5e1',
+    boxSizing: 'border-box',
+    textAlign: 'center',
+    outline: 'none',
+  },
+  inputMedium: {
     width: '100%',
     padding: '14px',
-    fontSize: '1.2rem',
-    borderRadius: '8px',
-    border: '2px solid #d1d5db',
+    fontSize: '1.4rem',
+    fontWeight: 'bold',
+    borderRadius: '12px',
+    border: '2px solid #cbd5e1',
     boxSizing: 'border-box',
+    textAlign: 'center',
     outline: 'none',
   },
   submitBtn: {
-    padding: '16px',
-    backgroundColor: '#16a34a',
-    color: '#ffffff',
-    border: 'none',
-    borderRadius: '10px',
-    fontSize: '1.3rem',
-    fontWeight: 'bold',
-    marginTop: '10px',
-  },
-  qrCard: {
-    backgroundColor: '#ffffff',
-    padding: '24px',
-    borderRadius: '16px',
-    boxShadow: '0 4px 12px rgba(0,0,0,0.08)',
-    border: '1px solid #e5e7eb',
-    textAlign: 'center',
-  },
-  summaryText: {
+    width: '100%',
+    padding: '18px',
     fontSize: '1.4rem',
     fontWeight: 'bold',
-    color: '#111827',
+    color: '#ffffff',
+    backgroundColor: '#2563eb',
+    border: 'none',
+    borderRadius: '12px',
+    cursor: 'pointer',
+    marginTop: '8px',
+    boxShadow: '0 4px 12px rgba(37, 99, 235, 0.3)',
+  },
+  submitBtnDisabled: {
+    width: '100%',
+    padding: '18px',
+    fontSize: '1.4rem',
+    fontWeight: 'bold',
+    color: '#ffffff',
+    backgroundColor: '#94a3b8',
+    border: 'none',
+    borderRadius: '12px',
+    cursor: 'not-allowed',
+    marginTop: '8px',
+  },
+  errorBox: {
+    backgroundColor: '#fef2f2',
+    color: '#b91c1c',
+    padding: '12px 16px',
+    borderRadius: '8px',
+    marginBottom: '16px',
+    fontWeight: '600',
+    border: '1px solid #fecaca',
+  },
+  
+  /* Warning Card Style */
+  warningBox: {
+    backgroundColor: '#fff7ed',
+    border: '2px solid #f97316',
+    borderRadius: '12px',
+    padding: '20px',
+    marginBottom: '24px',
+    textAlign: 'center',
+  },
+  warningIcon: {
+    fontSize: '2.5rem',
+    lineHeight: '1',
+    marginBottom: '8px',
+  },
+  warningTitle: {
+    margin: '0 0 8px 0',
+    fontSize: '1.25rem',
+    color: '#c2410c',
+    fontWeight: 'bold',
+  },
+  warningDesc: {
+    margin: '0 0 16px 0',
+    color: '#9a3412',
+    fontSize: '1rem',
+  },
+  closeOldSessionBtn: {
+    backgroundColor: '#ea580c',
+    color: '#ffffff',
+    border: 'none',
+    padding: '12px 24px',
+    fontSize: '1.1rem',
+    fontWeight: 'bold',
+    borderRadius: '8px',
+    cursor: 'pointer',
+    boxShadow: '0 2px 8px rgba(234, 88, 12, 0.3)',
+  },
+
+  /* QR Result Card Style */
+  qrCard: {
+    backgroundColor: '#ffffff',
+    borderRadius: '16px',
+    padding: '28px 20px',
+    textAlign: 'center',
+    boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.1)',
+    border: '2px solid #22c55e',
+  },
+  badgeSuccess: {
+    display: 'inline-block',
+    backgroundColor: '#dcfce7',
+    color: '#15803d',
+    padding: '6px 16px',
+    borderRadius: '20px',
+    fontWeight: 'bold',
+    fontSize: '0.95rem',
+    marginBottom: '12px',
+  },
+  qrTitle: {
+    fontSize: '2.5rem',
+    margin: '0 0 4px 0',
+    color: '#0f172a',
+  },
+  summaryText: {
+    fontSize: '1.2rem',
+    color: '#475569',
     margin: '0 0 20px 0',
   },
-  qrBox: {
-    backgroundColor: '#f9fafb',
+  qrImageWrapper: {
+    display: 'inline-block',
     padding: '16px',
-    borderRadius: '12px',
-    border: '1px solid #e5e7eb',
+    backgroundColor: '#f8fafc',
+    borderRadius: '16px',
+    border: '1px solid #e2e8f0',
     marginBottom: '20px',
+  },
+  qrImage: {
+    width: '260px',
+    height: '260px',
+    display: 'block',
+  },
+  urlLabel: {
+    fontSize: '0.95rem',
+    color: '#64748b',
+    marginBottom: '6px',
+    fontWeight: '600',
   },
   urlBox: {
     display: 'flex',
-    flexDirection: 'column',
     alignItems: 'center',
-    gap: '10px',
-    backgroundColor: '#f3f4f6',
-    padding: '12px',
-    borderRadius: '8px',
+    gap: '8px',
+    backgroundColor: '#f1f5f9',
+    padding: '10px 12px',
+    borderRadius: '10px',
     marginBottom: '24px',
   },
   urlText: {
-    fontSize: '1rem',
-    color: '#2563eb',
+    flex: 1,
+    fontSize: '0.9rem',
+    color: '#0f172a',
     wordBreak: 'break-all',
-    fontWeight: '500',
+    textAlign: 'left',
+    fontFamily: 'monospace',
   },
   copyBtn: {
-    padding: '8px 16px',
-    backgroundColor: '#3b82f6',
+    backgroundColor: '#0f172a',
     color: '#ffffff',
     border: 'none',
+    padding: '8px 14px',
     borderRadius: '6px',
-    fontSize: '0.95rem',
+    fontSize: '0.85rem',
     fontWeight: 'bold',
     cursor: 'pointer',
+    whiteSpace: 'nowrap',
+  },
+  copyBtnSuccess: {
+    backgroundColor: '#16a34a',
+    color: '#ffffff',
+    border: 'none',
+    padding: '8px 14px',
+    borderRadius: '6px',
+    fontSize: '0.85rem',
+    fontWeight: 'bold',
+    cursor: 'pointer',
+    whiteSpace: 'nowrap',
   },
   resetBtn: {
     width: '100%',
-    padding: '14px',
-    backgroundColor: '#4b5563',
-    color: '#ffffff',
-    border: 'none',
-    borderRadius: '10px',
-    fontSize: '1.1rem',
+    padding: '16px',
+    fontSize: '1.2rem',
     fontWeight: 'bold',
+    color: '#0f172a',
+    backgroundColor: '#f1f5f9',
+    border: '1px solid #cbd5e1',
+    borderRadius: '12px',
     cursor: 'pointer',
   },
+
+  /* Modal Style */
   modalOverlay: {
     position: 'fixed',
     top: 0,
     left: 0,
     right: 0,
     bottom: 0,
-    backgroundColor: 'rgba(0,0,0,0.6)',
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
@@ -485,46 +553,55 @@ const styles = {
   },
   modalContent: {
     backgroundColor: '#ffffff',
-    padding: '24px',
     borderRadius: '16px',
-    maxWidth: '440px',
+    padding: '24px',
+    maxWidth: '400px',
     width: '100%',
-    boxShadow: '0 20px 25px -5px rgba(0,0,0,0.2)',
+    boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.2)',
   },
-  modalDetail: {
-    backgroundColor: '#fef2f2',
-    padding: '14px',
+  modalTitle: {
+    margin: '0 0 12px 0',
+    fontSize: '1.4rem',
+    color: '#b91c1c',
+  },
+  modalText: {
+    fontSize: '1.1rem',
+    margin: '0 0 16px 0',
+    color: '#334155',
+  },
+  sessionDetails: {
+    backgroundColor: '#f8fafc',
+    padding: '12px 16px',
     borderRadius: '8px',
-    marginBottom: '16px',
-    border: '1px solid #fecaca',
-    fontSize: '1.05rem',
+    marginBottom: '20px',
+    border: '1px solid #e2e8f0',
     lineHeight: '1.6',
+    fontSize: '1rem',
   },
   modalActions: {
     display: 'flex',
     gap: '12px',
-    justifyContent: 'flex-end',
   },
   cancelBtn: {
     flex: 1,
     padding: '12px',
-    backgroundColor: '#e5e7eb',
-    color: '#374151',
-    border: 'none',
-    borderRadius: '8px',
     fontSize: '1rem',
     fontWeight: 'bold',
+    backgroundColor: '#e2e8f0',
+    color: '#334155',
+    border: 'none',
+    borderRadius: '8px',
     cursor: 'pointer',
   },
-  confirmBtn: {
+  confirmCloseBtn: {
     flex: 1,
     padding: '12px',
+    fontSize: '1rem',
+    fontWeight: 'bold',
     backgroundColor: '#dc2626',
     color: '#ffffff',
     border: 'none',
     borderRadius: '8px',
-    fontSize: '1rem',
-    fontWeight: 'bold',
     cursor: 'pointer',
   },
-}
+};
